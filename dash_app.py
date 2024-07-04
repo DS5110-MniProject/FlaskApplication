@@ -1,21 +1,24 @@
 from dash import Dash, html, dcc, dash_table, callback, Input, Output
 import plotly.graph_objects as go
-import numpy as np
 import pandas as pd
-import sqlite3
 import base64
 from io import StringIO, BytesIO
 from report import ReportGenerator
-from data_prep.Data_Preprocessing import format_df, merge_files_and_format
+from data_prep.Data_Preprocessing import merge_files_and_format
 from data_prep.File_imports import read_file
 from data_prep.NaN import fix_NaN
 # constants
-features = [
-    'Name',
+x_opts = [
     'Age',
     'City',
     'Salary',
     'JoinDate'
+]
+y_opts = [
+    'Age',
+    'Salary',
+    'JoinDate',
+    'count'
 ]
 app = Dash()
 app.title = 'DS 5110 Mini-Project'
@@ -68,49 +71,35 @@ def upload_callback(files, filenames, df_json):
             return merged_no_nans.to_json()
 
 def get_graph_options_component():
-    return html.Div(
-        id='graph-options',
-        style={'width':'50%'},
-        children = [
-            html.Div(
-                id="options-title",
-                children="Choose the x and y axis"
-            ),
-            html.Div(id="menus",
+    return html.Div(id="menus",
                      style={
                          'width':'100%',
                          'display':'flex',
                          'flexDirection':'row',
-                         'justifyContent':'space-around',
+                         'justifyContent':'center'
                      },
                      children=[
-                         html.Div(id='menu-1',
-                                  style={
-                                      'width':'50%'
-                                  },
+                         html.Div(id='x-menu',
+                                  style={'width':'25%'},
                                   children=[
                                       dcc.Dropdown(
                                           placeholder='X Axis',
                                           id="x-select",
-                                          options=features
+                                          options=x_opts
                                       )
                                   ]),
-                         html.Div(id='menu-2',
-                                  style={
-                                      'width':'50%'
-                                  },
+                         html.Div(id='y-menu',
+                                  style={'width':'25%'},
                                   children=[
                                       dcc.Dropdown(
                                           placeholder='Y Axis',
                                           id="y-select",
-                                          options=features + ['count']
+                                          options=y_opts
                                       )
                                   ]),
                      ]
 
             )
-        ]
-    )
 
 @callback(
     Output('y-axis', 'data'),
@@ -125,13 +114,6 @@ def store_y(y_val):
 )
 def store_x(x_val):
     return x_val
-
-def get_df_component():
-    return html.Div(
-        id="data-table",
-        style={'width':'100%',
-               'paddingTop':'50px'},
-        )
 
 @callback(
         Output('data-table', 'children'),
@@ -153,11 +135,9 @@ def df_callback(df_json):
             page_size=10
         )
 
-def get_graph_component():
-    return dcc.Graph()
 
 @callback(
-    Output('graph-wrapper', 'children'),
+    Output('graph', 'figure'),
     Input('df', 'data'),
     Input('x-axis', 'data'),
     Input('y-axis', 'data')
@@ -175,32 +155,15 @@ def graph_callback(df_json, x_axis, y_axis):
 # App Layout defines the element being show on screen. In this case, it is a single element page.
 app.layout = html.Div(
     id='outer-box',
-    style={
-        'width':'100%',
-        'height':'100%',
-        'display':'flex',
-        'flexDirection':'column'
-    },
     children=[
         dcc.Store(id='df'), # Stores the current dataframe
         dcc.Store(id='x-axis'), # Stores the selection for plotted x axis
         dcc.Store(id='y-axis'), # Stores the selection for plotted y axis
-        html.Div(id='options', # Div containing the first two elements: the uploading module, and the graph options
-                 style={
-                    'width':'100%',
-                    'height':'30%',
-                    'display':'flex',
-                    'flexDirection':'row',
-                    'justifyContent':'space-around'
-                 },
-                 children=[
-                    get_upload_component(),
-                    get_graph_options_component(),
-                 ]
-                 ),
-        
-        get_df_component(), # returns the dataframe
-        get_graph_component()
+        get_upload_component(),
+        html.Div(id="data-table"),
+        html.H4("Choose the x and y axis", style={'textAlign':'center'}),
+        get_graph_options_component(),
+        dcc.Graph(id='graph')
         ])
 
 if __name__ == '__main__':
