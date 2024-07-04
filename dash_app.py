@@ -5,7 +5,10 @@ import pandas as pd
 import sqlite3
 import base64
 from io import StringIO, BytesIO
-
+from report import ReportGenerator
+from data_prep.Data_Preprocessing import format_df, merge_files_and_format
+from data_prep.File_imports import read_file
+from data_prep.NaN import fix_NaN
 # constants
 features = [
     'Name',
@@ -35,7 +38,7 @@ def get_upload_component():
             'textAlign': 'center',
             'margin': '10px'
         },
-        multiple=False
+        multiple=True
     )
 
 @callback(
@@ -44,43 +47,25 @@ def get_upload_component():
         Input('upload-data', 'filename'),
         Input('df', 'data')
 )
-def upload_callback(file, filename, df_json):
-    if file is not None:
-        ct, file_str = file.split(',')
-        decoded = base64.b64decode(file_str)
-        if decoded:
-            bytes_obj = BytesIO(decoded)
-            bytes_obj.seek(0)
-            new_df = import_data(filename, bytes_obj)
-            if df_json:
-                df = pd.read_json(StringIO(df_json))
-                df = pd.concat((df, new_df), ignore_index=True)
-            else:
-                df = new_df
-            return df.to_json()
-    
-def import_data(filename, file_stream):## TODO REPLACE WITH GROUP 1,2, and 3 work
-    if filename.endswith('.json'):
-        return pd.read_json(file_stream)
-    elif filename.endswith('.csv'):
-        return pd.read_csv(file_stream)
-    elif filename.endswith('.xlsx'):
-        return pd.read_excel(file_stream)
-    elif filename.endswith('.db'):
-        with open("db_file.db", "wb") as f:
-            f.write(file_stream.getbuffer())
-        conn = sqlite3.connect("db_file.db")
-        query = "SELECT name FROM sqlite_master WHERE type = 'table';"
-        table_names = pd.read_sql_query(query, conn)['name'].tolist()
-        if len(table_names) != 1:
-            raise ValueError(f"Expected one table, found {len(table_names)}: {table_names}")
-        else:
-            query = f"SELECT * FROM {table_names[0]}"
-            df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
-    else:
-        raise NameError("Cannot read file.  Can only support .json, .csv, .xlsx, and .db extensions.")
+def upload_callback(files, filenames, df_json):
+    if files is not None:
+        dfs = []
+        if df_json:
+            dfs.append(pd.read_json(StringIO(df_json)))
+        for idx, file in enumerate(files):
+            if file is not None:
+                ct, file_str = file.split(',')
+                decoded = base64.b64decode(file_str)
+                if decoded:
+                    bytes_obj = BytesIO(decoded)
+                    bytes_obj.seek(0)
+                    with open(filenames[idx], "wb") as f:
+                        f.write(bytes_obj.getbuffer())
+                    dfs.append(read_file(filenames[idx]))
+        if len(dfs) != 0:
+            merged = merge_files_and_format(dfs)
+            merged_no_nans = fix_NaN(merged)
+            return merged_no_nans.to_json()
 
 def get_graph_options_component():
     return html.Div(
@@ -121,35 +106,73 @@ def get_graph_options_component():
                                           options=features + ['count']
                                       )
                                   ]),
-                        html.Button('Submit', id='graph-submit', style={'width':'50%'})
                      ]
 
             )
         ]
     )
 
+@callback(
+    Output('y-axis', 'data'),
+    Input('y-select', 'value')
+)
+def store_y(y_val):
+    return y_val
+
+@callback(
+    Output('x-axis', 'data'),
+    Input('x-select', 'value')
+)
+def store_x(x_val):
+    return x_val
+
 def get_df_component():
-    df = pd.DataFrame({
-        'THIS':[x for x in range(10)],
-        'IS':[x for x in range(10)],
-        'THE':[x for x in range(10)],
-        'DATAFRAME':[x for x in range(10)]
-        })
     return html.Div(
+        id="data-table",
         style={'width':'100%',
                'paddingTop':'50px'},
-        children=[
-        dash_table.DataTable(df.to_dict('records'), [{"name":i, "id":i} for i in df.columns], id="data-table")
-        ]
         )
+
+@callback(
+        Output('data-table', 'children'),
+        Input('df', 'data')
+)
+def df_callback(df_json):
+    if df_json:
+        df = pd.read_json(StringIO(df_json))
+        return dash_table.DataTable(
+            data=df.to_dict('records'), 
+            columns=[{"name":i, "id":i} for i in df.columns], 
+            editable=False,
+            filter_action="native",
+            sort_mode="multi",
+            sort_action="native",
+            row_deletable=False,
+            page_action="native",
+            page_current=0,
+            page_size=10
+        )
+
 def get_graph_component():
-    return html.Div(
-        id='graph-wrapper',
-        style={'height':'100%'},
-        children=[
-        dcc.Graph(figure=go.Figure(go.Line(x=np.arange(0, 100))))
-        ]
-    )
+    return dcc.Graph()
+
+@callback(
+    Output('graph-wrapper', 'children'),
+    Input('df', 'data'),
+    Input('x-axis', 'data'),
+    Input('y-axis', 'data')
+)
+def graph_callback(df_json, x_axis, y_axis):
+    if df_json and x_axis:
+        if not y_axis:
+            y_axis = None
+        repo = ReportGenerator(pd.read_json(StringIO(df_json)))
+        fig = repo.histogram(x_axis, y_axis)
+        return fig
+    else:
+        return go.Figure()
+
+# App Layout defines the element being show on screen. In this case, it is a single element page.
 app.layout = html.Div(
     id='outer-box',
     style={
@@ -159,8 +182,10 @@ app.layout = html.Div(
         'flexDirection':'column'
     },
     children=[
-        dcc.Store(id='df'),
-        html.Div(id='options',
+        dcc.Store(id='df'), # Stores the current dataframe
+        dcc.Store(id='x-axis'), # Stores the selection for plotted x axis
+        dcc.Store(id='y-axis'), # Stores the selection for plotted y axis
+        html.Div(id='options', # Div containing the first two elements: the uploading module, and the graph options
                  style={
                     'width':'100%',
                     'height':'30%',
@@ -173,19 +198,10 @@ app.layout = html.Div(
                     get_graph_options_component(),
                  ]
                  ),
-        html.Div(id='main',
-                 style={
-                    'width':'100%',
-                    'height':'70%',
-                    'display':'flex',
-                    'flexDirection':'row',
-                    'justifyContent':'space-around'
-                 },
-                 children=[
-                    get_df_component(),
-                    get_graph_component()
-                 ])
-])
+        
+        get_df_component(), # returns the dataframe
+        get_graph_component()
+        ])
 
 if __name__ == '__main__':
     app.run(debug=True)
