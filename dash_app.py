@@ -64,7 +64,7 @@ def upload_callback(files, filenames, df_json):
                     bytes_obj.seek(0)
                     with open(filenames[idx], "wb") as f:
                         f.write(bytes_obj.getbuffer())
-                    dfs.append(read_file(filenames[idx]))
+                    dfs.append(read_file(filenames[idx], filenames[idx]))
         if len(dfs) != 0:
             merged = merge_files_and_format(dfs)
             merged_no_nans = fix_NaN(merged)
